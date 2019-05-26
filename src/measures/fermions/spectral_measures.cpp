@@ -18,7 +18,7 @@
 namespace nissa
 {
 
-  //Computes the participation ratio
+  //Computes the participation ratio on the time slices
   void participation_ratio(double *pratios, color *v)
   {
     
@@ -50,13 +50,43 @@ namespace nissa
     }    
   }
 
+  void chiral_components(double **chir, quad_su3 **conf, quad_u1 **u1b, int neigs, color **eigvec){
+    //identity backfield
+
+    color *tmpvec_eo[2]={nissa_malloc("tmpvec_eo_EVN",loc_volh+bord_volh,color),nissa_malloc("tmpvec_eo_ODD",loc_volh+bord_volh,color)};
+    color *eigvec_gX_eo[2]={nissa_malloc("eigvec_gX_EVN",loc_volh+bord_volh,color),nissa_malloc("eigvec_gX_ODD",loc_volh+bord_volh,color)};
+    color *eigvec_gX_lx=nissa_malloc("eigvec_gX",loc_vol+bord_vol,color);
+   complex tmpval;
+   for(int ieig=0; ieig<neigs; ++ieig){ 
+      split_lx_vector_into_eo_parts(tmpvec_eo,eigvec[ieig]);
+
+      // gX -> chiral condensate
+      apply_stag_op(eigvec_gX_eo,conf,u1b,stag::GAMMA_0,stag::IDENTITY,tmpvec_eo);
+      paste_eo_parts_into_lx_vector(eigvec_gX_lx,eigvec_gX_eo);
+      
+      complex_vector_glb_scalar_prod(tmpval,(complex*)eigvec[ieig],(complex*)eigvec_gX_lx,loc_vol*sizeof(color)/sizeof(complex));
+      chir[0][ieig] = tmpval[RE];
+      
+      // g5 -> chirality
+      apply_stag_op(eigvec_gX_eo,conf,u1b,stag::GAMMA_5,stag::IDENTITY,tmpvec_eo);
+      paste_eo_parts_into_lx_vector(eigvec_gX_lx,eigvec_gX_eo);
+      
+      complex_vector_glb_scalar_prod(tmpval,(complex*)eigvec[ieig],(complex*)eigvec_gX_lx,loc_vol*sizeof(color)/sizeof(complex));
+      chir[1][ieig] = tmpval[RE];
+    }
+    nissa_free(tmpvec_eo[EVN]);
+    nissa_free(tmpvec_eo[ODD]);
+    nissa_free(eigvec_gX_eo[EVN]);
+    nissa_free(eigvec_gX_eo[ODD]);
+    nissa_free(eigvec_gX_lx);
+  }
 
   // This measure will compute the first 'n' eigenvalues (parameter)
   // and eigenvectors of the iD operator in staggered formulation, in order to
   // build an estimate of the topological susceptibility.
   // refs:  https://arxiv.org/pdf/1008.0732.pdf for the susceptibility formula,
   //        https://arxiv.org/pdf/0912.2850.pdf for the 2^(d/2) overcounting.
-  THREADABLE_FUNCTION_8ARG(measure_iDst_spectrum, color**,eigvec, quad_su3**,conf, complex*, eigval, double**, part_ratios, int,neigs, bool, minmax, double,eig_precision, int,wspace_size)
+  THREADABLE_FUNCTION_9ARG(measure_iDst_spectrum, color**,eigvec, quad_su3**,conf, complex*, eigval, double**, part_ratios, double **, chir, int,neigs, bool, minmax, double,eig_precision, int,wspace_size)
   {
     //identity backfield
     quad_u1 *u1b[2]={nissa_malloc("u1b",loc_volh+bord_volh,quad_u1),nissa_malloc("u1b",loc_volh+bord_volh,quad_u1)};
@@ -72,6 +102,8 @@ namespace nissa
     {
       participation_ratio(part_ratios[ieig],eigvec[ieig]);
     }
+    chiral_components(chir, conf, u1b, neigs, eigvec);
+
     for(int ieig=0;ieig<neigs;ieig++)
     {
       verbosity_lv2_master_printf("lam_%d = (%.16lg,%.16lg)\n",ieig,eigval[ieig][RE],eigval[ieig][IM]);
@@ -138,6 +170,8 @@ namespace nissa
       for(int ieig=0;ieig<neigs;ieig++)
         eigvec_spincol[ieig]=nissa_malloc("eigvec_spincol_ieig",loc_vol+bord_vol,spincolor);
     }
+    double * chir[2] = {nissa_malloc("chir_cond",neigs,double),nissa_malloc("chir_ality",neigs,double)};
+    
 
     //loop on smooth
     int nsmooth=0;
@@ -156,7 +190,7 @@ namespace nissa
           vector_reset(eigvec_spincol[ieig]);
       }
       if(opname=="iDst"){ 
-        measure_iDst_spectrum(eigvec_col,conf,eigval,part_ratios,neigs,meas_pars.minmax,meas_pars.eig_precision,meas_pars.wspace_size);
+        measure_iDst_spectrum(eigvec_col,conf,eigval,part_ratios,chir, neigs,meas_pars.minmax,meas_pars.eig_precision,meas_pars.wspace_size);
       }else if (opname=="iDov"){
         ;//measure_iDov_spectrum(eigvec_spincol,conf_lx,eigval,part_ratios,neigs,meas_pars.minmax,meas_pars.eig_precision,meas_pars.wspace_size);
       }
@@ -169,6 +203,12 @@ namespace nissa
       master_fprintf(file,"%.16lg\t",eigval[ieig][RE]);
     for(int ieig=0;ieig<neigs*glb_size[0];++ieig) for(int ti=0; ti<glb_size[0]; ++ti){
       master_fprintf(file,"%.16lg\t",part_ratios[ieig][ti]);
+    }
+    for(int ieig=0; ieig<neigs; ++ieig){
+      master_fprintf(file,"%.16lg\t",chir[0][ieig]);
+    }
+    for(int ieig=0; ieig<neigs; ++ieig){
+      master_fprintf(file,"%.16lg\t",chir[1][ieig]);
     }
     master_fprintf(file,"\n");
     
@@ -198,6 +238,8 @@ namespace nissa
       nissa_free(eigvec_spincol);
     }
     nissa_free(eigval);
+    nissa_free(chir[0]);
+    nissa_free(chir[1]);
     for(int ieig=0; ieig<neigs; ieig++)
       nissa_free(part_ratios[ieig]);
 		nissa_free(part_ratios);
