@@ -19,26 +19,35 @@ namespace nissa
 {
 
   //Computes the participation ratio
-  double participation_ratio(color *v)
+  void participation_ratio(double *pratios, color *v)
   {
-    GET_THREAD_ID();
     
-    double *l=nissa_malloc("l",loc_vol,double);
-    
-    NISSA_PARALLEL_LOOP(ivol,0,loc_vol)
+    for(int ti=0; ti<glb_size[0]; ++ti)
+    {
+      
+      GET_THREAD_ID();
+      
+      double *l=nissa_malloc("l",glb_spat_vol,double);
+      
+      NISSA_PARALLEL_LOOP(ivol,0,glb_spat_vol)
       {
-  complex t;
-  color_scalar_prod(t,v[ivol],v[ivol]);
-  l[ivol]=t[RE];
+        complex t;
+
+        int ilx = ti+glb_size[0]*ivol;
+
+
+        color_scalar_prod(t,v[ilx],v[ilx]);
+        l[ilx]=t[RE];
       }
-    THREAD_BARRIER();
-    
-    double s=double_vector_glb_norm2(l,loc_vol);
-    double n2=double_vector_glb_norm2(v,loc_vol);
-    
-    nissa_free(l);
-    
-    return sqr(n2)/(glb_vol*s);
+      THREAD_BARRIER();
+      
+      double s=double_vector_glb_norm2(l,glb_spat_vol);
+      double n2=double_vector_glb_norm2(v,glb_spat_vol);
+      
+      pratios[ti]=sqr(n2)/(glb_spat_vol*s);
+
+      nissa_free(l);
+    }    
   }
 
 
@@ -47,11 +56,12 @@ namespace nissa
   // build an estimate of the topological susceptibility.
   // refs:  https://arxiv.org/pdf/1008.0732.pdf for the susceptibility formula,
   //        https://arxiv.org/pdf/0912.2850.pdf for the 2^(d/2) overcounting.
-  THREADABLE_FUNCTION_8ARG(measure_iDst_spectrum, color**,eigvec, quad_su3**,conf, complex*, eigval, double*, part_ratios, int,neigs, bool, minmax, double,eig_precision, int,wspace_size)
+  THREADABLE_FUNCTION_8ARG(measure_iDst_spectrum, color**,eigvec, quad_su3**,conf, complex*, eigval, double**, part_ratios, int,neigs, bool, minmax, double,eig_precision, int,wspace_size)
   {
     //identity backfield
     quad_u1 *u1b[2]={nissa_malloc("u1b",loc_volh+bord_volh,quad_u1),nissa_malloc("u1b",loc_volh+bord_volh,quad_u1)};
     init_backfield_to_id(u1b);
+    add_antiperiodic_condition_to_backfield(u1b,0);
 
     //launch the eigenfinder
     double eig_time=-take_time();
@@ -60,7 +70,7 @@ namespace nissa
     verbosity_lv2_master_printf("\n\nEigenvalues of staggered iD operator:\n");
     for(int ieig=0;ieig<neigs;ieig++)
     {
-      part_ratios[ieig]=participation_ratio(eigvec[ieig]);
+      participation_ratio(part_ratios[ieig],eigvec[ieig]);
     }
     for(int ieig=0;ieig<neigs;ieig++)
     {
@@ -89,7 +99,7 @@ namespace nissa
 //    }
 //    verbosity_lv2_master_printf("\n\n\n");
 //    
-//    eig_time+=take_time();
+//    eig_time+=take_time()
 //    verbosity_lv1_master_printf("Eigenvalues time: %lg\n",eig_time);
 //    
 //    nissa_free(tmpvec_eo[EVN]);
@@ -113,7 +123,10 @@ namespace nissa
       paste_eo_parts_into_lx_vector(conf_lx,conf);  
     }
     complex *eigval=nissa_malloc("eigval",neigs,complex);
-    double *part_ratios=nissa_malloc("part_ratios",neigs,double);
+    double **part_ratios=nissa_malloc("part_ratios",neigs,double*);
+    for(int ieig=0; ieig<neigs; ieig++)
+      part_ratios[ieig] = nissa_malloc("part_ratios_ieig",glb_size[0],double);
+    
     color **eigvec_col;
     spincolor **eigvec_spincol;
     if(opname=="iDst"){
@@ -154,9 +167,9 @@ namespace nissa
     master_fprintf(file,"%d\t%d\t%d\t",iconf,meas_pars.smooth_pars.nsmooth(),neigs);
     for(int ieig=0;ieig<neigs;++ieig)
       master_fprintf(file,"%.16lg\t",eigval[ieig][RE]);
-    for(int ieig=0;ieig<neigs;++ieig)
-      master_fprintf(file,"%.16lg\t",part_ratios[ieig]);
-    
+    for(int ieig=0;ieig<neigs*glb_size[0];++ieig) for(int ti=0; ti<glb_size[0]; ++ti){
+      master_fprintf(file,"%.16lg\t",part_ratios[ieig][ti]);
+    }
     master_fprintf(file,"\n");
     
     close_file(file);
@@ -185,6 +198,8 @@ namespace nissa
       nissa_free(eigvec_spincol);
     }
     nissa_free(eigval);
+    for(int ieig=0; ieig<neigs; ieig++)
+      nissa_free(part_ratios[ieig]);
 		nissa_free(part_ratios);
     nissa_free(conf_lx);
   }
