@@ -19,11 +19,14 @@
 namespace nissa
 {
 
-  THREADABLE_FUNCTION_2ARG(inv_participation_ratio, double *,ipratio,color *, v)
+  THREADABLE_FUNCTION_3ARG(inv_participation_ratio, double *,ipratio, double *, dens, color *, v)
   {
     GET_THREAD_ID();
     double *loc_ipr=nissa_malloc("loc_ipr",glb_size[0],double);
     vector_reset(loc_ipr);
+    double *loc_dens=nissa_malloc("loc_dens",glb_size[0],double);
+    vector_reset(loc_dens);
+
     complex t;
 
     NISSA_PARALLEL_LOOP(loc_t,0,loc_size[0])
@@ -31,18 +34,25 @@ namespace nissa
     {
         color_scalar_prod(t,v[ivol],v[ivol]);
         loc_ipr[glb_coord_of_loclx[ivol][0]]+=complex_norm2(t);
+        loc_dens[glb_coord_of_loclx[ivol][0]]+=sqrt(complex_norm2(t));
     }
 
     double *coll_ipr=nissa_malloc("coll_ipr",glb_size[0],double);
     if(IS_MASTER_THREAD) MPI_Reduce(loc_ipr,coll_ipr,glb_size[0],MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
     nissa_free(loc_ipr);
 
+    double *coll_dens=nissa_malloc("coll_dens",glb_size[0],double);
+    if(IS_MASTER_THREAD) MPI_Reduce(loc_dens,coll_dens,glb_size[0],MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+    nissa_free(loc_dens);
+
     //normalize 
     for(int t=0;t<glb_size[0];t++)
       {
 	ipratio[t]=coll_ipr[t]*glb_spat_vol;
+  dens[t] = loc_dens[t];
       }
     nissa_free(coll_ipr);    
+    nissa_free(coll_dens);    
 
 
   }
@@ -111,7 +121,6 @@ namespace nissa
     verbosity_lv1_master_printf("Eigenvalues time: %lg\n",eig_time);
 
     verbosity_lv2_master_printf("\n\nEigenvalues of staggered iD operator:\n");
-//      inv_participation_ratio(part_ratios,neigs,eigvec);
     chiral_components(chir, conf, u1b, neigs, eigvec);
 
     for(int ieig=0;ieig<neigs;ieig++)
@@ -138,6 +147,7 @@ namespace nissa
     complex *eigval=nissa_malloc("eigval",neigs,complex);
     vector_reset(eigval);
     double part_ratios[neigs*glb_size[0]];
+    double dens4slice[neigs*glb_size[0]];
 
     
     color **eigvec=nissa_malloc("eigvec",neigs,color*);
@@ -156,7 +166,7 @@ namespace nissa
 
 
     for(int ieig=0;ieig<neigs;ieig++){
-      inv_participation_ratio(&part_ratios[ieig*glb_size[0]],eigvec[ieig]);
+      inv_participation_ratio(&part_ratios[ieig*glb_size[0]],&dens4slice[ieig*glb_size[0]],eigvec[ieig]);
     }
 
 
@@ -171,6 +181,9 @@ namespace nissa
     }
     for(int ieig=0; ieig<neigs; ++ieig){
       master_fprintf(file,"%.16lg\t",chir[ieig]);
+    }
+    for(int i=0;i<neigs*glb_size[0];++i){
+      master_fprintf(file,"%.16lg\t",dens4slice[i]);
     }
     master_fprintf(file,"\n");
     
