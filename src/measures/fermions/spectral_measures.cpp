@@ -19,7 +19,7 @@
 namespace nissa
 {
 
-  THREADABLE_FUNCTION_3ARG(inv_participation_ratio, double *,ipratio, double *, dens, color *, v)
+  THREADABLE_FUNCTION_3ARG(participation_ratio_and_density_per_slice, double *, ipratio, double *, dens, color *, v)
   {
     GET_THREAD_ID();
     double *loc_ipr=nissa_malloc("loc_ipr",glb_size[0],double);
@@ -49,12 +49,10 @@ namespace nissa
     for(int t=0;t<glb_size[0];t++)
       {
 	ipratio[t]=coll_ipr[t]*glb_spat_vol;
-  dens[t] = loc_dens[t];
+	dens[t]=coll_dens[t];
       }
     nissa_free(coll_ipr);    
     nissa_free(coll_dens);    
-
-
   }
   THREADABLE_FUNCTION_END
 
@@ -166,7 +164,7 @@ namespace nissa
 
 
     for(int ieig=0;ieig<neigs;ieig++){
-      inv_participation_ratio(&part_ratios[ieig*glb_size[0]],&dens4slice[ieig*glb_size[0]],eigvec[ieig]);
+      participation_ratio_and_density_per_slice(&part_ratios[ieig*glb_size[0]],&dens4slice[ieig*glb_size[0]],eigvec[ieig]);
     }
 
 
@@ -176,12 +174,16 @@ namespace nissa
     master_fprintf(file,"%d\t%d\t%d\t",iconf,meas_pars.smooth_pars.nsmooth(),neigs);
     for(int ieig=0;ieig<neigs;++ieig)
       master_fprintf(file,"%.16lg\t",eigval[ieig][RE]);
+
+
     for(int i=0;i<neigs*glb_size[0];++i){
       master_fprintf(file,"%.16lg\t",part_ratios[i]);
     }
+
     for(int ieig=0; ieig<neigs; ++ieig){
       master_fprintf(file,"%.16lg\t",chir[ieig]);
     }
+
     for(int i=0;i<neigs*glb_size[0];++i){
       master_fprintf(file,"%.16lg\t",dens4slice[i]);
     }
