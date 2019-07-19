@@ -82,7 +82,7 @@ namespace nissa
 #endif
     
     MPI_Barrier(MPI_COMM_WORLD);
-    master_printf("   Ciao!\n\n");
+    master_printf("   Suca!\n\n");
     MPI_Finalize();
   }
 }
